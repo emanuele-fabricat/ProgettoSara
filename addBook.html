@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Recupero info libro da codice a barre / ISBN</title>
+  <style>
+    :root{--bg:#f6f8fb;--card:#fff;--accent:#2563eb;--muted:#666}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:var(--bg);color:#111}
+    .wrap{max-width:900px;margin:32px auto;padding:20px}
+    header{display:flex;align-items:center;gap:16px}
+    h1{font-size:1.25rem;margin:0}
+    .grid{display:grid;grid-template-columns:1fr 320px;gap:18px;margin-top:18px}
+    .card{background:var(--card);border-radius:12px;padding:16px;box-shadow:0 6px 18px rgba(20,20,50,0.06)}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input[type="text"]{width:100%;padding:10px;border-radius:8px;border:1px solid #e6e9ef;font-size:1rem}
+    button{background:var(--accent);color:#fff;padding:10px 12px;border-radius:8px;border:0;cursor:pointer;font-weight:600}
+    button.secondary{background:#fff;color:var(--accent);border:1px solid #dbe6ff}
+    .small{font-size:0.9rem;color:var(--muted)}
+    #video{max-width:100%;border-radius:8px}
+    .cover{max-width:140px;border-radius:6px}
+    pre{background:#0f1724;color:#d1e9ff;padding:12px;border-radius:8px;overflow:auto;font-size:0.9rem}
+    .hint{margin-top:8px;font-size:0.9rem;color:var(--muted)}
+    .actions{display:flex;gap:8px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Trova info libro da codice a barre / ISBN</h1>
+      <div class="small">Inserisci ISBN o usa la fotocamera</div>
+    </header>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <label for="isbn">ISBN / Codice a barre</label>
+          <input id="isbn" type="text" placeholder="es. 9780143126560 oppure 0143126563">
+
+          <div class="actions">
+            <button id="fetchBtn">Recupera info</button>
+            <button id="startScan" class="secondary">Avvia scansione</button>
+            <button id="stopScan" class="secondary" style="display:none">Stop</button>
+          </div>
+
+          <div id="scanArea" class="hint" style="display:none;margin-top:12px">
+            <video id="video" playsinline autoplay muted></video>
+            <div class="hint">Punta la fotocamera sul codice a barre.</div>
+          </div>
+
+          <hr style="margin:14px 0;border:none;border-top:1px solid #eef2ff">
+
+          <div id="result" class="small">
+            <div id="status">In attesa…</div>
+
+            <div id="bookCard" style="margin-top:12px;display:none">
+              <div style="display:flex;gap:12px">
+                <img id="cover" class="cover" src="" alt="cover" style="display:none">
+                <div>
+                  <h2 id="title" style="margin:0 0 6px 0"></h2>
+                  <div id="authors"></div>
+                  <div id="publish" style="margin-top:8px"></div>
+                  <div id="links" style="margin-top:8px"></div>
+                </div>
+              </div>
+
+              <hr style="margin:12px 0;border:none;border-top:1px dashed #eef2ff">
+
+              <div id="description" class="small"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <label>Risposta grezza (JSON)</label>
+          <pre id="raw">---</pre>
+        </div>
+      </div>
+
+      <aside>
+        <div class="card">
+          <h3 style="margin-top:0">Istruzioni rapide</h3>
+          <ol>
+            <li>Inserisci l'ISBN (10 o 13 cifre)</li>
+            <li>Oppure usa la fotocamera</li>
+            <li>I dati vengono da OpenLibrary (fallback: Google Books)</li>
+          </ol>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+<script>
+
+/* =====================
+   FUNZIONI GENERALI
+===================== */
+
+function sanitizeISBN(raw){
+  if(!raw) return '';
+  return raw.toUpperCase().replace(/[^0-9X]/g,'');
+}
+
+function showStatus(msg){ document.getElementById('status').textContent = msg; }
+function showRaw(obj){ document.getElementById('raw').textContent = JSON.stringify(obj,null,2); }
+
+
+/* =============================
+   FETCH DATI (OpenLibrary + Google Fallback)
+============================= */
+
+async function fetchFromOpenLibrary(isbn){
+  const key = "ISBN:" + isbn;
+  const url = `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(key)}&format=json&jscmd=data`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data[key]) return {source:"openlibrary", data:data[key]};
+  return null;
+}
+
+async function fetchFromGoogleBooks(isbn){
+  const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data.totalItems > 0) return {source:"google", data:data.items[0].volumeInfo};
+  return null;
+}
+
+async function fetchBookInfo(isbn){
+  showStatus("Ricerca in corso…");
+  showRaw({query:isbn});
+
+  try{
+    let r = await fetchFromOpenLibrary(isbn);
+    if(r){
+      showStatus("Trovato su OpenLibrary");
+      
+      (r);
+      return r;
+    }
+
+    r = await fetchFromGoogleBooks(isbn);
+    if(r){
+      showStatus("Trovato su Google Books");
+      showRaw(r);
+      return r;
+    }
+
+    showStatus("Nessun dato trovato");
+    return null;
+
+  }catch(e){
+    showStatus("Errore: " + e.message);
+    return null;
+  }
+}
+
+
+/* =============================
+   GESTIONE SICURA COPERTINA
+============================= */
+
+function tryLoadImage(url, timeout=5000){
+  return new Promise(resolve => {
+    if(!url) return resolve(null);
+
+    const suspicious = /\.zip\b|\/zip\/|\.tar\b/.test(url.toLowerCase());
+    if (suspicious){
+      console.warn("URL sospetto ZIP ignorato:", url);
+      return resolve(null);
+    }
+
+    if(!/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)){
+      console.warn("URL non riconosciuto come immagine:", url);
+      return resolve(null);
+    }
+
+    const img = new Image();
+    let done = false;
+
+    const timer = setTimeout(()=>{
+      if(!done){
+        done = true;
+        resolve(null);
+      }
+    }, timeout);
+
+    img.onload = () => {
+      if(!done){
+        done = true;
+        clearTimeout(timer);
+        resolve(url);
+      }
+    };
+
+    img.onerror = () => {
+      if(!done){
+        done = true;
+        clearTimeout(timer);
+        resolve(null);
+      }
+    };
+
+    img.src = url;
+  });
+}
+
+async function findWorkingCover(isbn, candidates){
+  for(const c of candidates){
+    const ok = await tryLoadImage(c);
+    if(ok) return ok;
+  }
+
+  // fallback OpenLibrary
+  const fallback = `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`;
+  const ok = await tryLoadImage(fallback);
+  if(ok) return ok;
+
+  return null;
+}
+
+
+/* =============================
+   RENDER RISULTATO
+============================= */
+
+async function renderResult(res, isbn){
+  const card = document.getElementById("bookCard");
+  const coverImg = document.getElementById("cover");
+  const title = document.getElementById("title");
+  const authors = document.getElementById("authors");
+  const publish = document.getElementById("publish");
+  const links = document.getElementById("links");
+  const desc = document.getElementById("description");
+
+  if(!res){
+    card.style.display='none';
+    return;
+  }
+
+  let d = res.data;
+  let titleText = "";
+  let authorsText = "";
+  let publishText = "";
+  let descText = "";
+  let moreLink = "";
+  let coverCandidates = [];
+
+  if(res.source === "openlibrary"){
+    titleText = d.title || "";
+    authorsText = d.authors ? d.authors.map(a=>a.name).join(", ") : "";
+    publishText = d.publish_date || "";
+    moreLink = d.url ? "https://openlibrary.org"+d.url : "";
+    descText = d.excerpts ? d.excerpts.map(e=>e.text).join("\n\n") : (d.notes || "");
+
+    if(d.cover){
+      coverCandidates.push(d.cover.large, d.cover.medium, d.cover.small);
+    }
+  }
+
+  if(res.source === "google"){
+    titleText = d.title || "";
+    authorsText = d.authors ? d.authors.join(", ") : "";
+    publishText = (d.publisher || "") + " " + (d.publishedDate || "");
+    descText = d.description || "";
+    moreLink = d.infoLink || "";
+
+    if(d.imageLinks){
+      coverCandidates.push(
+        d.imageLinks.large,
+        d.imageLinks.medium,
+        d.imageLinks.small,
+        d.imageLinks.thumbnail,
+        d.imageLinks.smallThumbnail
+      );
+    }
+  }
+
+  coverCandidates = coverCandidates.filter(Boolean);
+
+  showStatus("Verifica copertina…");
+  const workingUrl = await findWorkingCover(isbn, coverCandidates);
+
+  title.textContent = titleText;
+  authors.textContent = authorsText;
+  publish.textContent = publishText;
+  desc.textContent = descText;
+  links.innerHTML = moreLink ? `<a href="${moreLink}" target="_blank">Scheda</a>` : "";
+
+  if(workingUrl){
+    coverImg.src = workingUrl;
+    coverImg.style.display = "block";
+    showStatus("Dati caricati");
+  } else {
+    coverImg.style.display = "none";
+    showStatus("Copertina non trovata");
+  }
+
+  card.style.display = "block";
+}
+
+
+/* =============================
+   UI BUTTONS
+============================= */
+
+document.getElementById("fetchBtn").addEventListener("click", async () => {
+  const raw = document.getElementById("isbn").value;
+  const isbn = sanitizeISBN(raw);
+
+  if(!isbn || (isbn.length !== 10 && isbn.length !== 13)){
+    return showStatus("Inserisci un ISBN valido (10 o 13 cifre)");
+  }
+
+  const data = await fetchBookInfo(isbn);
+  renderResult(data, isbn);
+});
+
+
+/* =============================
+   SCANSIONE BARCODE
+============================= */
+
+let stream = null;
+let scanning = false;
+let detector = null;
+
+const video = document.getElementById("video");
+const scanArea = document.getElementById("scanArea");
+
+async function startCamera(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    video.srcObject = stream;
+    await video.play();
+  }catch(e){
+    showStatus("Errore fotocamera: " + e.message);
+  }
+}
+
+async function stopCamera(){
+  if(stream){
+    stream.getTracks().forEach(t=>t.stop());
+  }
+  scanArea.style.display = "none";
+  scanning = false;
+}
+
+async function initDetector(){
+  if(!("BarcodeDetector" in window)) return false;
+  const fmts = await BarcodeDetector.getSupportedFormats();
+  detector = new BarcodeDetector({formats:fmts});
+  return true;
+}
+
+async function scanLoop(){
+  if(!scanning) return;
+
+  if(video.readyState >= 2){
+    const bmp = await createImageBitmap(video);
+    const results = await detector.detect(bmp);
+    bmp.close();
+
+    if(results.length){
+      const val = sanitizeISBN(results[0].rawValue);
+      document.getElementById("isbn").value = val;
+      showStatus("Codice letto: " + val);
+      await stopCamera();
+      document.getElementById("fetchBtn").click();
+      return;
+    }
+  }
+
+  requestAnimationFrame(scanLoop);
+}
+
+document.getElementById("startScan").addEventListener("click", async ()=>{
+  const ok = await initDetector();
+  if(!ok){
+    return showStatus("Il browser non supporta BarcodeDetector");
+  }
+
+  await startCamera();
+  scanArea.style.display = "block";
+  scanning = true;
+  scanLoop();
+});
+
+document.getElementById("stopScan").addEventListener("click", stopCamera);
+
+</script>
+</body>
+</html>
++
